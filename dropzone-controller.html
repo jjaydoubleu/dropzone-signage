@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dropzone Controller</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f4f0;
+    --surface: #ffffff;
+    --border: #e2e0d8;
+    --text: #1a1916;
+    --muted: #6b6960;
+    --accent: #d4580a;
+    --accent-light: #fff0e8;
+    --green: #1a7a4a;
+    --green-light: #e8f5ee;
+    --blue: #1d5fa8;
+    --blue-light: #e8f0fb;
+    --radius: 10px;
+  }
+
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header .logo { font-size: 15px; font-weight: bold; }
+  header .logo span { color: var(--accent); }
+  .live-dot { width:8px; height:8px; border-radius:50%; background:#22c55e; margin-left:auto; animation: pulse 1.4s infinite; }
+  .live-label { font-size:12px; color:var(--muted); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  main { max-width: 680px; margin: 0 auto; padding: 20px 16px; display: flex; flex-direction: column; gap: 14px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+  }
+
+  .card-title {
+    font-size: 11px; font-weight: bold;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 14px;
+  }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: var(--accent-light); }
+  .upload-zone input { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+  .upload-icon { font-size: 36px; margin-bottom: 10px; }
+  .upload-text { font-size: 14px; font-weight: bold; color: var(--text); }
+  .upload-sub  { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Preview */
+  #preview-wrap { display:none; margin-top:14px; }
+  #preview-img { width:100%; border-radius:8px; border:1px solid var(--border); max-height:220px; object-fit:cover; }
+
+  /* Extract button */
+  .btn-extract {
+    width: 100%; padding: 12px;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 8px;
+    font-size: 14px; font-weight: bold;
+    cursor: pointer; margin-top: 12px;
+    display: none;
+  }
+  .btn-extract:hover { background: #b8470a; }
+  .btn-extract:disabled { background: #ccc; cursor: default; }
+
+  /* Extracted result */
+  #result-card { display:none; }
+
+  .result-flight {
+    font-size: 13px; font-weight: bold;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 10px;
+  }
+
+  .name-list { list-style: none; margin-bottom: 14px; }
+  .name-list li {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; border-radius: 6px;
+    font-size: 14px; font-weight: bold;
+    border-bottom: 1px solid var(--border);
+  }
+  .name-list li:last-child { border-bottom: none; }
+  .name-list li .remove {
+    font-size: 16px; color: #ccc; cursor: pointer; border: none;
+    background: none; padding: 0 4px; line-height: 1;
+  }
+  .name-list li .remove:hover { color: #e53e3e; }
+
+  /* Add name */
+  .add-row { display:flex; gap:8px; margin-bottom:14px; }
+  .add-row input {
+    flex:1; padding:8px 10px; border-radius:7px;
+    border:1px solid var(--border); font-size:13px;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .add-row button {
+    padding:8px 14px; border-radius:7px;
+    border:1px solid var(--border); background:var(--bg);
+    font-size:13px; cursor:pointer; font-weight:bold;
+  }
+
+  .flight-input-row { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .flight-input-row label { font-size:12px; color:var(--muted); font-weight:bold; white-space:nowrap; }
+  .flight-input-row input {
+    width:80px; padding:7px 10px; border-radius:7px;
+    border:1px solid var(--border); font-size:14px; font-weight:bold;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  .btn-row { display:flex; gap:8px; }
+  .btn {
+    flex:1; padding:11px; border-radius:8px; border:1px solid var(--border);
+    font-size:13px; font-weight:bold; cursor:pointer;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .btn-standby { background: var(--accent-light); border-color:#f0c09a; color:var(--accent); }
+  .btn-standby:hover { background:#fde4cd; }
+  .btn-suitup  { background: var(--green-light); border-color:#a8d5bc; color:var(--green); }
+  .btn-suitup:hover  { background:#d0eddc; }
+  .btn-idle    { background: var(--bg); color:var(--muted); }
+  .btn-idle:hover    { background:#eae9e4; }
+
+  /* Status bar */
+  .status-bar {
+    background: #1a1916; color: #e8e6df;
+    border-radius: var(--radius); padding:14px 18px;
+  }
+  .status-bar .slabel { font-size:11px; color:#6b6860; text-transform:uppercase; letter-spacing:0.07em; }
+  .status-bar .sval   { font-size:14px; font-weight:bold; margin-top:2px; }
+
+  /* Spinner */
+  .spinner { display:inline-block; width:16px; height:16px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.7s linear infinite; vertical-align:middle; margin-right:6px; }
+  @keyframes spin { to{transform:rotate(360deg)} }
+
+  .error-msg { color:#c0392b; font-size:13px; margin-top:8px; display:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">&#x2708; Dropzone <span>Signage</span></div>
+  <span class="live-label">Display live</span>
+  <div class="live-dot"></div>
+</header>
+
+<main>
+
+  <div class="status-bar">
+    <div class="slabel">Currently showing</div>
+    <div class="sval" id="current-msg">Idle — welcome screen</div>
+  </div>
+
+  <!-- Upload -->
+  <div class="card">
+    <div class="card-title">Step 1 — Upload IBIS screenshot</div>
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" accept="image/*" id="file-input" onchange="handleFile(this.files[0])">
+      <div class="upload-icon">&#128247;</div>
+      <div class="upload-text">Tap to upload or drag &amp; drop</div>
+      <div class="upload-sub">Screenshot from PC or photo from phone — any image works</div>
+    </div>
+    <div id="preview-wrap">
+      <img id="preview-img" src="" alt="Preview">
+    </div>
+    <button class="btn-extract" id="btn-extract" onclick="extractNames()">
+      &#129302; Read names from image
+    </button>
+    <div class="error-msg" id="error-msg"></div>
+  </div>
+
+  <!-- Result -->
+  <div class="card" id="result-card">
+    <div class="card-title">Step 2 — Confirm &amp; broadcast</div>
+
+    <div class="flight-input-row">
+      <label>FLIGHT NUMBER</label>
+      <input type="text" id="flight-num" value="" placeholder="e.g. 3">
+    </div>
+
+    <div class="add-row">
+      <input type="text" id="add-name" placeholder="Add a name manually..." onkeydown="if(event.key==='Enter')addName()">
+      <button onclick="addName()">+ Add</button>
+    </div>
+
+    <ul class="name-list" id="name-list"></ul>
+
+    <div class="btn-row">
+      <button class="btn btn-standby" onclick="broadcast('standby')">&#128227; Standby</button>
+      <button class="btn btn-suitup"  onclick="broadcast('suitup')">&#128994; Suit up</button>
+      <button class="btn btn-idle"    onclick="broadcast('idle')">&#x2302; Clear</button>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const socket = io();
+let customers = [];
+
+// Drag and drop
+const zone = document.getElementById('upload-zone');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag'); handleFile(e.dataTransfer.files[0]); });
+
+function handleFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('preview-img').src = e.target.result;
+    document.getElementById('preview-wrap').style.display = 'block';
+    document.getElementById('btn-extract').style.display = 'block';
+    document.getElementById('error-msg').style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function extractNames() {
+  const btn = document.getElementById('btn-extract');
+  const errEl = document.getElementById('error-msg');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Reading image...';
+  errEl.style.display = 'none';
+
+  try {
+    const imgSrc = document.getElementById('preview-img').src;
+    const [meta, base64] = imgSrc.split(',');
+    const mediaType = meta.match(/:(.*?);/)[1];
+
+    const res = await fetch('/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64: base64, mediaType })
+    });
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Extraction failed');
+
+    customers = data.customers || [];
+    document.getElementById('flight-num').value = data.flight || '';
+    renderNames();
+    document.getElementById('result-card').style.display = 'block';
+    document.getElementById('result-card').scrollIntoView({ behavior: 'smooth' });
+
+    btn.innerHTML = '&#10003; Names read — check below';
+    btn.style.background = '#1a7a4a';
+  } catch(err) {
+    errEl.textContent = 'Could not read image: ' + err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.innerHTML = '&#129302; Try again';
+  }
+}
+
+function renderNames() {
+  document.getElementById('name-list').innerHTML = customers.map((n, i) =>
+    `<li><span>${n}</span><button class="remove" onclick="removeName(${i})">&#x2715;</button></li>`
+  ).join('');
+}
+
+function removeName(i) {
+  customers.splice(i, 1);
+  renderNames();
+}
+
+function addName() {
+  const inp = document.getElementById('add-name');
+  const val = inp.value.trim();
+  if (!val) return;
+  customers.push(val);
+  renderNames();
+  inp.value = '';
+}
+
+function broadcast(type) {
+  const flight = document.getElementById('flight-num').value.trim();
+  const msg = { type, flight, customers: [...customers] };
+  socket.emit('push', msg);
+  fetch('/push', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(msg) });
+  const labels = { standby:`Flight ${flight} — Standby`, suitup:`Flight ${flight} — Suit up!`, idle:'Idle — welcome screen' };
+  document.getElementById('current-msg').textContent = labels[type] || type;
+}
+</script>
+</body>
+</html>
